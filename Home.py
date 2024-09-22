@@ -117,7 +117,6 @@ st.markdown(f"""
         margin-top: 4rem;
         font-size: 0.9rem;
         color: #888;
-        padding: 1rem;
     }}
     </style>
     """, unsafe_allow_html=True)
@@ -128,11 +127,6 @@ navbar_option = st.sidebar.radio(
     "#### Navigasi:",
     ["Pengantar", "Tahapan Pengolahan dan Penerapan Algoritma Apriori dalam CKM"]
 )
-
-# Header Section
-st.markdown("""
-<h2 class='sub-header'>Implementasi Customer Knowledge Management Menggunakan Metode Apriori Berbasis Framework Streamlit
-""", unsafe_allow_html=True)
 
 if navbar_option == "Pengantar":
     st.markdown(f"""
@@ -146,6 +140,12 @@ elif navbar_option == "Tahapan Pengolahan dan Penerapan Algoritma Apriori dalam 
     window.location.href = '#tahapan-pengolahan-dan-penerapan-algoritma-apriori-dalam-ckm';
     </script>
     """, unsafe_allow_html=True)
+
+# Header Section
+st.markdown("""
+<h2 class='sub-header'>Implementasi Customer Knowledge Management Menggunakan Metode Apriori Berbasis Framework Streamlit
+""", unsafe_allow_html=True)
+
 # Boody Section
 st.markdown("""
 <div class='research-section'>
@@ -188,7 +188,7 @@ st.markdown("""
 
 # Footer Section
 st.markdown("""
-<div class='footer'>
-    Website ini dikembangkan untuk mendukung penelitian Customer Knowledge Management (CKM) pada UMKM Dkriuk Purbalingga.
-</div>
+    <div class='footer'>
+        © 2024 CKM UMKM Purbalingga - Semua Hak Dilindungi
+    </div>
 """, unsafe_allow_html=True)

@@ -1,517 +1,568 @@
-import io
 import time
 import pandas as pd
 import streamlit as st
 import utils
 import streamlit.components.v1 as components
+from google.cloud import bigquery
+from google.oauth2.service_account import Credentials
 
-# Inisialisasi variabel di session state
+# Initialize BigQuery client
+credentials = Credentials.from_service_account_info(
+    st.secrets["gcp_service_account"]
+)
+client = bigquery.Client(credentials=credentials)
+
+# BigQuery configuration
+DATASET_ID = "ckm-apriori.dkriuk"  # Replace with your dataset ID in BigQuery
+TABLE_ID = f"{DATASET_ID}.dkriuk-2023"
+
+# Initialize session state variables
 if 'uploaded_file' not in st.session_state:
     st.session_state.uploaded_file = None
 if 'df' not in st.session_state:
     st.session_state.df = None
-if 'filtered_df' not in st.session_state:
-    st.session_state.filtered_df = None
+if 'selected_file_name' not in st.session_state:
+    st.session_state.selected_file_name = None
+if 'selected_data' not in st.session_state:
+    st.session_state.selected_data = None
+if 'confirm_data' not in st.session_state:
+    st.session_state.confirm_data = False 
 if 'preprocessed_df' not in st.session_state:
     st.session_state.preprocessed_df = None
-if 'selected_combination' not in st.session_state:
-    st.session_state.selected_combination = "Balanced choice. Support: 0.015, Confidence: 0.25"
+if 'date_range' not in st.session_state:
+    st.session_state.date_range = None
+if 'filtered_df' not in st.session_state:
+    st.session_state.filtered_df = None
 if 'my_basket_sets' not in st.session_state:
     st.session_state.my_basket_sets = None
 if 'rules' not in st.session_state:
     st.session_state.rules = None
 if 'formatted_rules' not in st.session_state:
     st.session_state.formatted_rules = None
-if 'product_recommendations' not in st.session_state:
-    st.session_state.product_recommendations = None
-if 'promo_recommendations' not in st.session_state:
-    st.session_state.promo_recommendations = None
+if 'selected_combination' not in st.session_state:
+    st.session_state.selected_combination = "Pilihan seimbang. Support: 0.015, Confidence: 0.25"
+if 'sort_by' not in st.session_state:
+    st.session_state.sort_by = "Confidence"
+if "logged_in" not in st.session_state:
+        st.session_state.logged_in = False
 
 st.set_page_config(
-    page_title="Customer Knowledge Management",
+    page_title="Customer Knowledge Management - CKM UMKM Purbalingga",
     page_icon="🍗",
     layout="wide"
 )
-
+st.logo("logo.png") 
 st.header("Customer Knowledge Management")
-st.logo("logo.png")
-# Sidebar-based navbar for navigation
+
+if "logged_in" not in st.session_state or not st.session_state.logged_in:
+    st.warning("You must log in to access this page.")
+    st.stop()
+
+# Sidebar navigasi
 navbar_option = st.sidebar.radio(
-    "#### Navigation:",
-    ["Upload and Preprocess Data", "Analysis Data", "Association Rule with Apriori", "Product Recommendation", "Promo Recommendation"]
+    "Navigasi:",
+    ["Mengunggah Data", "Preprocessing Data", "Analisis Data", "Analisis Apriori", "Penerapan"]
 )
+
 REQUIRED_COLUMNS = ['orderId', 'categoryName', 'itemName', 'price', 'qty', 'orderTime']
 
-# Section: Sidebar for Date Filter
-if st.session_state.preprocessed_df is not None:
-    preprocessed_df = st.session_state.preprocessed_df
-    
-    # Get min and max dates from the preprocessed data
-    min_date = pd.to_datetime(preprocessed_df['orderTime'].min())
-    max_date = pd.to_datetime(preprocessed_df['orderTime'].max())
-
-    # Sidebar Date Range Input
-    st.sidebar.markdown("#### Filter")
-    date_range = st.sidebar.date_input("Select Date Range", [min_date, max_date], min_value=min_date, max_value=max_date,
-                                    help="Select Date Range for filter data to use.")
-
-    # Ensure that both start and end dates are selected
-    if isinstance(date_range, tuple) and len(date_range) == 2:
-        # Both start and end date selected
-        start_date = pd.to_datetime(date_range[0])
-        end_date = pd.to_datetime(date_range[1]) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
-    else:
-        # Only one date selected, so set end_date to be the same as start_date
-        start_date = pd.to_datetime(date_range[0])
-        end_date = start_date + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
-
-    # Filter the dataframe based on the selected date range
-    filtered_df = preprocessed_df[(preprocessed_df['orderTime'] >= start_date) & (preprocessed_df['orderTime'] <= end_date)]
-    st.session_state.filtered_df = filtered_df
-
-    if navbar_option == "Analysis Data":
-        st.sidebar.markdown("#### Analysis Data Filters")
-        time_period = st.sidebar.selectbox(
-            "Select Time Period",
-            options=["D (Daily)", "W (Weekly)", "M (Monthly)", "Y (Yearly)"],
-            index=0,
-            help="Select Time Period for filter data to use."
-        )
-
-        time_period_map = {"D (Daily)": "D", "W (Weekly)": "W", "M (Monthly)": "M", "Y (Yearly)": "Y"}
-        selected_time_period = time_period_map[time_period]
-
-# Section 1: Upload and preprocess data
-if navbar_option == "Upload and Preprocess Data":
-    with st.expander("Upload and Preprocess Data", expanded=True):
-        uploaded_file = st.file_uploader("Choose a CSV file", type=["csv"],
-                                        help="Only CSV files are allowed. Required columns: orderId, categoryName, itemName, price, qty, orderTime.")
-
+# Section 1: Mengunggah Data
+if navbar_option == "Mengunggah Data":
+    with st.expander("Mengunggah Data", expanded=True):
+        # File uploader for CSV
+        uploaded_file = st.file_uploader("Pilih file CSV", type=["csv"], help="Pilih file CSV yang ingin diunggah.")
+        
         if uploaded_file is not None:
-            st.session_state.uploaded_file = uploaded_file
-
+            # Convert the uploaded CSV file into a Pandas DataFrame
             df = pd.read_csv(uploaded_file)
-            # Save the dataframe to session state
-            st.session_state.df = df
-            st.markdown("#### Uploaded Data Summary")
-            tab1, tab2 = st.columns(2, gap='medium')
-            with tab1:
-                st.write("Uploaded Data Table:")
-                st.dataframe(df)
-
-            with tab2:
-                st.write("Uploaded Data Info:")
-                
-                num_rows = df.shape[0]
-                num_columns = df.shape[1]
-                unique_orders = df['orderId'].nunique() if 'orderId' in df.columns else "N/A"
-                unique_items = df['itemName'].nunique() if 'itemName' in df.columns else "N/A"
-                unique_categories = df['categoryName'].nunique() if 'categoryName' in df.columns else "N/A"
-                min_time = df['orderTime'].min() if 'orderTime' in df.columns else "N/A"
-                max_time = df['orderTime'].max() if 'orderTime' in df.columns else "N/A"
-
-                # If orderTime exists, show date range
-                if min_time != "N/A" and max_time != "N/A":
-                    st.markdown(f"""
-                        <div style="background-color: #f0f2f6; padding: 10px; border-radius: 5px; margin-bottom: 20px;">
-                            <strong>Date Range of Orders:</strong> {min_time} to {max_time}
-                        </div>
-                        """, unsafe_allow_html=True)            
-                
-                # Create a clean summary using metrics
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric(label="Number of Rows", value=num_rows)
-                    st.metric(label="Number of Unique Categories", value=unique_categories)
-
-                with col2:
-                    st.metric(label="Number of Columns", value=num_columns)
-                    st.metric(label="Number of Unique Items", value=unique_items)
-
-                with col3:
-                    st.metric(label="Number of Unique Orders", value=unique_orders)
-                    
-                st.write("Data Types of Columns")
-                data_types_str = " | ".join([f"**{col}**: {dtype}" for col, dtype in df.dtypes.items()])
-                data_types_str = " | ".join([f"<strong>{col}</strong>: {dtype}" for col, dtype in df.dtypes.items()])
-
-                st.markdown(f"""
-                    <p style="margin-top: 0px; line-height: 1.5;">
-                        {data_types_str}
-                    </p>
-                    """, unsafe_allow_html=True)
-
-                # Summary Statistics for numeric columns
-                st.write("Summary Statistics for Numeric Columns")
-                stats = df[['qty', 'price']].describe()
-                sums = df[['qty', 'price']].sum()
-                st.markdown(f"""
-                    - **Quantity (Min, Max, Sum):** {stats['qty']['min']:.2f}, {stats['qty']['max']:.2f}, {sums['qty']:.2f}
-                    - **Price (Min, Max, Sum):** {stats['price']['min']:.2f}, {stats['price']['max']:.2f}, {sums['price']:.2f}
-                    """)
-
-                # Check for missing values
-                missing_values = df.isnull().sum()
-                if missing_values.any():
-                    st.write("Missing Values:")
-                    
-                    # Display missing values in a cleaner format
-                    for column, value in missing_values[missing_values > 0].items():
-                        st.write(f"- **{column}:** {value} missing values")
-
-            st.markdown("---")
-            st.markdown("#### Preprocessed Data Summary")
-            preprocessed_df = utils.preprocess_data(df)
-            st.session_state.preprocessed_df = preprocessed_df
-
-            tab1, tab2 = st.columns(2, gap='medium')
-            with tab1:
-                st.write("Preprocessed Data Table:")
-                st.dataframe(preprocessed_df)
-
-            with tab2:
-                st.write("Preprocessed Data Info:")
-                
-                num_rows = preprocessed_df.shape[0]
-                num_columns = preprocessed_df.shape[1]
-                unique_orders = preprocessed_df['orderId'].nunique() if 'orderId' in preprocessed_df.columns else "N/A"
-                unique_items = preprocessed_df['itemName'].nunique() if 'itemName' in preprocessed_df.columns else "N/A"
-                unique_categories = preprocessed_df['categoryName'].nunique() if 'categoryName' in preprocessed_df.columns else "N/A"
-                min_time = preprocessed_df['orderTime'].min() if 'orderTime' in preprocessed_df.columns else "N/A"
-                max_time = preprocessed_df['orderTime'].max() if 'orderTime' in preprocessed_df.columns else "N/A"
-
-                # If orderTime exists, show date range
-                if min_time != "N/A" and max_time != "N/A":
-                    st.markdown(f"""
-                        <div style="background-color: #f0f2f6; padding: 10px; border-radius: 5px; margin-bottom: 20px;">
-                            <strong>Date Range of Orders:</strong> {min_time} to {max_time}
-                        </div>
-                        """, unsafe_allow_html=True)            
-                
-                # Create a clean summary using metrics
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric(label="Number of Rows", value=num_rows)
-                    st.metric(label="Number of Unique Categories", value=unique_categories)
-
-                with col2:
-                    st.metric(label="Number of Columns", value=num_columns)
-                    st.metric(label="Number of Unique Items", value=unique_items)
-
-                with col3:
-                    st.metric(label="Number of Unique Orders", value=unique_orders)
-                    
-                st.write("Data Types of Columns")
-                data_types_str = " | ".join([f"**{col}**: {dtype}" for col, dtype in preprocessed_df.dtypes.items()])
-                data_types_str = " | ".join([f"<strong>{col}</strong>: {dtype}" for col, dtype in preprocessed_df.dtypes.items()])
-
-                st.markdown(f"""
-                    <p style="margin-top: 0px; line-height: 1.5;">
-                        {data_types_str}
-                    </p>
-                    """, unsafe_allow_html=True)
-
-                # Summary Statistics for numeric columns
-                st.write("Summary Statistics for Numeric Columns")
-                stats = preprocessed_df[['qty', 'price']].describe()
-                sums = preprocessed_df[['qty', 'price']].sum()
-                st.markdown(f"""
-                    - **Quantity (Min, Max, Sum):** {stats['qty']['min']:.2f}, {stats['qty']['max']:.2f}, {sums['qty']:.2f}
-                    - **Price (Min, Max, Sum):** {stats['price']['min']:.2f}, {stats['price']['max']:.2f}, {sums['price']:.2f}
-                    """)
-
-                # Check for missing values
-                missing_values = preprocessed_df.isnull().sum()
-                if missing_values.any():
-                    st.write("Missing Values:")
-                    
-                    # Display missing values in a cleaner format
-                    for column, value in missing_values[missing_values > 0].items():
-                        st.write(f"- **{column}:** {value} missing values")
-
-            # Get min and max dates for date range selection
-            # min_date = pd.to_datetime(preprocessed_df['orderTime'].min())
-            # max_date = pd.to_datetime(preprocessed_df['orderTime'].max())
-
-            # # Add date input with min and max dates
-            # date_range = st.date_input("Select Date Range", [min_date, max_date])
-
-            # # Convert date_range tuple to a list to modify
-            # start_date = pd.to_datetime(date_range[0])
-            # end_date = pd.to_datetime(date_range[1]) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
-
-            # # Filter the dataframe based on the adjusted date range
-            # filtered_df = preprocessed_df[(preprocessed_df['orderTime'] >= start_date) & (preprocessed_df['orderTime'] <= end_date)]
-            if st.session_state.filtered_df is not None:
-                filtered_df = st.session_state.filtered_df
-                min_time = filtered_df['orderTime'].min()
-                max_time = filtered_df['orderTime'].max()
-                
-                
-                st.markdown("---")
-                st.markdown("#### Filtered Data Summary")
-                st.markdown(f"""
-                    <div style="background-color: #f0f2f6; padding: 10px; border-radius: 5px; margin-bottom: 20px;">
-                        <strong>Date Range of Orders:</strong> {min_time.strftime('%Y-%m-%d %H:%M:%S')} to {max_time.strftime('%Y-%m-%d %H:%M:%S')}
-                    </div>
-                    """, unsafe_allow_html=True)
-
-                tab1, tab2 = st.columns(2, gap='medium')
-                with tab1:
-                    st.write("Filtered Data Table:")
-                    st.dataframe(filtered_df)
-
-                with tab2:
-                    st.write("Filtered Data Info:")         
-                    
-                    num_rows = filtered_df.shape[0]
-                    num_columns = filtered_df.shape[1]
-                    unique_orders = filtered_df['orderId'].nunique()
-                    unique_items = filtered_df['itemName'].nunique()
-                    unique_categories = filtered_df['categoryName'].nunique()
-                    
-                    col1, col2, col3 = st.columns(3)
-
-                    with col1:
-                        st.metric(label="Number of Rows", value=num_rows)
-                        st.metric(label="Number of Unique Categories", value=unique_categories)
-
-                    with col2:
-                        st.metric(label="Number of Columns", value=num_columns)
-                        st.metric(label="Number of Unique Items", value=unique_items)
-
-                    with col3:
-                        st.metric(label="Number of Unique Orders", value=unique_orders)
-                        # st.metric(label="Total Sales", value=f"{filtered_df['price'].sum():,.2f}")
-
-                    st.write("Summary Statistics for Numeric Columns")
-                    stats = preprocessed_df[['qty', 'price']].describe()
-                    sums = preprocessed_df[['qty', 'price']].sum()
-                    st.markdown(f"""
-                        - **Quantity (Min, Max, Sum):** {stats['qty']['min']:.2f}, {stats['qty']['max']:.2f}, {sums['qty']:.2f}
-                        - **Price (Min, Max, Sum):** {stats['price']['min']:.2f}, {stats['price']['max']:.2f}, {sums['price']:.2f}
-                        """)
-                    
-                    missing_values = filtered_df.isnull().sum()
-                    if missing_values.any():
-                        st.write("Missing Values:")
-                        for column, value in missing_values[missing_values > 0].items():
-                            st.write(f"- **{column}:** {value} missing values")
-
-        elif st.session_state.df is not None:
-            df = st.session_state.df 
-            st.markdown("#### Uploaded Data Summary")
-            tab1, tab2 = st.columns(2, gap='medium')
-            with tab1:
-                st.write("Uploaded Data Table:")
-                st.dataframe(df)
-
-            with tab2:
-                st.write("Info Uploaded Data:")
-                
-                num_rows = df.shape[0]
-                num_columns = df.shape[1]
-                unique_orders = df['orderId'].nunique() if 'orderId' in df.columns else "N/A"
-                unique_items = df['itemName'].nunique() if 'itemName' in df.columns else "N/A"
-                unique_categories = df['categoryName'].nunique() if 'categoryName' in df.columns else "N/A"
-                min_time = df['orderTime'].min() if 'orderTime' in df.columns else "N/A"
-                max_time = df['orderTime'].max() if 'orderTime' in df.columns else "N/A"
-
-                # If orderTime exists, show date range
-                if min_time != "N/A" and max_time != "N/A":
-                    st.markdown(f"""
-                        <div style="background-color: #f0f2f6; padding: 10px; border-radius: 5px; margin-bottom: 20px;">
-                            <strong>Date Range of Orders:</strong> {min_time} to {max_time}
-                        </div>
-                        """, unsafe_allow_html=True)            
-                
-                # Create a clean summary using metrics
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric(label="Number of Rows", value=num_rows)
-                    st.metric(label="Number of Unique Categories", value=unique_categories)
-
-                with col2:
-                    st.metric(label="Number of Columns", value=num_columns)
-                    st.metric(label="Number of Unique Items", value=unique_items)
-
-                with col3:
-                    st.metric(label="Number of Unique Orders", value=unique_orders)
-                    
-                st.write("Data Types of Columns")
-                data_types_str = " | ".join([f"**{col}**: {dtype}" for col, dtype in df.dtypes.items()])
-                data_types_str = " | ".join([f"<strong>{col}</strong>: {dtype}" for col, dtype in df.dtypes.items()])
-
-                st.markdown(f"""
-                    <p style="margin-top: 0px; line-height: 1.5;">
-                        {data_types_str}
-                    </p>
-                    """, unsafe_allow_html=True)
-
-                # Summary Statistics for numeric columns
-                st.write("Summary Statistics for Numeric Columns")
-                stats = df[['qty', 'price']].describe()
-                sums = df[['qty', 'price']].sum()
-                st.markdown(f"""
-                    - **Quantity (Min, Max, Sum):** {stats['qty']['min']:.2f}, {stats['qty']['max']:.2f}, {sums['qty']:.2f}
-                    - **Price (Min, Max, Sum):** {stats['price']['min']:.2f}, {stats['price']['max']:.2f}, {sums['price']:.2f}
-                    """)
-
-                # Check for missing values
-                missing_values = df.isnull().sum()
-                if missing_values.any():
-                    st.write("Missing Values:")
-                    
-                    # Display missing values in a cleaner format
-                    for column, value in missing_values[missing_values > 0].items():
-                        st.write(f"- **{column}:** {value} missing values")
-
-            st.markdown("---")
-            st.markdown("#### Preprocessed Data Summary")
-            preprocessed_df = utils.preprocess_data(df)
-            st.session_state.preprocessed_df = preprocessed_df
-
-            tab1, tab2 = st.columns(2, gap='medium')
-            with tab1:
-                st.write("Preprocessed Data Table:")
-                st.dataframe(preprocessed_df)
-
-            with tab2:
-                st.write("Preprocessed Data Info:")
-                
-                num_rows = preprocessed_df.shape[0]
-                num_columns = preprocessed_df.shape[1]
-                unique_orders = preprocessed_df['orderId'].nunique() if 'orderId' in preprocessed_df.columns else "N/A"
-                unique_items = preprocessed_df['itemName'].nunique() if 'itemName' in preprocessed_df.columns else "N/A"
-                unique_categories = preprocessed_df['categoryName'].nunique() if 'categoryName' in preprocessed_df.columns else "N/A"
-                min_time = preprocessed_df['orderTime'].min() if 'orderTime' in preprocessed_df.columns else "N/A"
-                max_time = preprocessed_df['orderTime'].max() if 'orderTime' in preprocessed_df.columns else "N/A"
-
-                # If orderTime exists, show date range
-                if min_time != "N/A" and max_time != "N/A":
-                    st.markdown(f"""
-                        <div style="background-color: #f0f2f6; padding: 10px; border-radius: 5px; margin-bottom: 20px;">
-                            <strong>Date Range of Orders:</strong> {min_time} to {max_time}
-                        </div>
-                        """, unsafe_allow_html=True)            
-                
-                # Create a clean summary using metrics
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric(label="Number of Rows", value=num_rows)
-                    st.metric(label="Number of Unique Categories", value=unique_categories)
-
-                with col2:
-                    st.metric(label="Number of Columns", value=num_columns)
-                    st.metric(label="Number of Unique Items", value=unique_items)
-
-                with col3:
-                    st.metric(label="Number of Unique Orders", value=unique_orders)
-                    
-                st.write("Data Types of Columns")
-                data_types_str = " | ".join([f"**{col}**: {dtype}" for col, dtype in preprocessed_df.dtypes.items()])
-                data_types_str = " | ".join([f"<strong>{col}</strong>: {dtype}" for col, dtype in preprocessed_df.dtypes.items()])
-
-                st.markdown(f"""
-                    <p style="margin-top: 0px; line-height: 1.5;">
-                        {data_types_str}
-                    </p>
-                    """, unsafe_allow_html=True)
-
-                # Summary Statistics for numeric columns
-                st.write("Summary Statistics for Numeric Columns")
-                stats = preprocessed_df[['qty', 'price']].describe()
-                sums = preprocessed_df[['qty', 'price']].sum()
-                st.markdown(f"""
-                    - **Quantity (Min, Max, Sum):** {stats['qty']['min']:.2f}, {stats['qty']['max']:.2f}, {sums['qty']:.2f}
-                    - **Price (Min, Max, Sum):** {stats['price']['min']:.2f}, {stats['price']['max']:.2f}, {sums['price']:.2f}
-                    """)
-
-                # Check for missing values
-                missing_values = preprocessed_df.isnull().sum()
-                if missing_values.any():
-                    st.write("Missing Values:")
-                    
-                    # Display missing values in a cleaner format
-                    for column, value in missing_values[missing_values > 0].items():
-                        st.write(f"- **{column}:** {value} missing values")
-
-            # Get min and max dates for date range selection
-            # min_date = pd.to_datetime(preprocessed_df['orderTime'].min())
-            # max_date = pd.to_datetime(preprocessed_df['orderTime'].max())
-
-            # # Add date input with min and max dates
-            # date_range = st.date_input("Select Date Range", [min_date, max_date])
-
-            # # Convert date_range tuple to a list to modify
-            # start_date = pd.to_datetime(date_range[0])
-            # end_date = pd.to_datetime(date_range[1]) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
-
-            # # Filter the dataframe based on the adjusted date range
-            # filtered_df = preprocessed_df[(preprocessed_df['orderTime'] >= start_date) & (preprocessed_df['orderTime'] <= end_date)]
-            if st.session_state.filtered_df is not None:
-                filtered_df = st.session_state.filtered_df
-
-                st.markdown("---")
-                st.markdown("#### Filtered Data Summary")
-                min_time = filtered_df['orderTime'].min()
-                max_time = filtered_df['orderTime'].max()
-
-                # Display date range
-                st.markdown(f"""
-                    <div style="background-color: #f0f2f6; padding: 10px; border-radius: 5px; margin-bottom: 20px;">
-                        <strong>Date Range of Orders:</strong> {min_time.strftime('%Y-%m-%d %H:%M:%S')} to {max_time.strftime('%Y-%m-%d %H:%M:%S')}
-                    </div>
-                    """, unsafe_allow_html=True)
-                tab1, tab2 = st.columns(2, gap='medium')
-                with tab1:
-                    st.write("Filtered Data Table:")
-                    st.dataframe(filtered_df)
-
-                with tab2:
-                    st.write("Filtered Data Info:")         
-                    
-                    num_rows = filtered_df.shape[0]
-                    num_columns = filtered_df.shape[1]
-                    unique_orders = filtered_df['orderId'].nunique()
-                    unique_items = filtered_df['itemName'].nunique()
-                    unique_categories = filtered_df['categoryName'].nunique()
-                    
-
-                    # Display the summary in the second column
-                    col1, col2, col3 = st.columns(3)
-
-                    with col1:
-                        st.metric(label="Number of Rows", value=num_rows)
-                        st.metric(label="Number of Unique Categories", value=unique_categories)
-
-                    with col2:
-                        st.metric(label="Number of Columns", value=num_columns)
-                        st.metric(label="Number of Unique Items", value=unique_items)
-
-                    with col3:
-                        st.metric(label="Number of Unique Orders", value=unique_orders)
-                        # st.metric(label="Total Sales", value=f"{filtered_df['price'].sum():,.2f}")
-
-                    st.write("Summary Statistics for Numeric Columns")
-                    stats = preprocessed_df[['qty', 'price']].describe()
-                    sums = preprocessed_df[['qty', 'price']].sum()
-                    st.markdown(f"""
-                        - **Quantity (Min, Max, Sum):** {stats['qty']['min']:.2f}, {stats['qty']['max']:.2f}, {sums['qty']:.2f}
-                        - **Price (Min, Max, Sum):** {stats['price']['min']:.2f}, {stats['price']['max']:.2f}, {sums['price']:.2f}
-                        """)
-                    
-                    missing_values = filtered_df.isnull().sum()
-                    if missing_values.any():
-                        st.write("Missing Values:")
-                        for column, value in missing_values[missing_values > 0].items():
-                            st.write(f"- **{column}:** {value} missing values")
-
-# Section 2: Analysis Data
-elif navbar_option == "Analysis Data":
-    with st.expander("Analysis Data", expanded=True):
-        if st.session_state.filtered_df is not None:
             
+            if 'orderTime' in df.columns:
+                df['orderTime'] = pd.to_datetime(df['orderTime'], errors='coerce')
+            
+            df['fileName'] = uploaded_file.name
+            st.session_state.uploaded_file = uploaded_file
+            st.session_state.df = df
+            
+            st.markdown(f"#### Data yang diunggah dari file: **{uploaded_file.name}**")
+            tab1, tab2 = st.columns(2, gap='medium')
+            with tab1:
+                st.write("Tabel Data yang Diunggah:")
+                st.dataframe(df)
+                if st.button("Konfirmasi Pengunggahan", type="primary"):
+                    st.session_state.confirm_data = True
+
+            with tab2:
+                st.write("Info Data yang Diupload:")
+                
+                num_rows = df.shape[0]
+                num_columns = df.shape[1]
+                unique_orders = df['orderId'].nunique() if 'orderId' in df.columns else "N/A"
+                unique_items = df['itemName'].nunique() if 'itemName' in df.columns else "N/A"
+                unique_categories = df['categoryName'].nunique() if 'categoryName' in df.columns else "N/A"
+                min_time = df['orderTime'].min() if 'orderTime' in df.columns else "N/A"
+                max_time = df['orderTime'].max() if 'orderTime' in df.columns else "N/A"
+                
+                if min_time != "N/A" and max_time != "N/A":
+                    st.markdown(f"""
+                        <div style="background-color: #f0f2f6; padding: 10px; border-radius: 5px; margin-bottom: 20px;">
+                            <strong>Rentang Tanggal Pesanan:</strong> {min_time} to {max_time}
+                        </div>
+                        """, unsafe_allow_html=True)            
+                
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric(label="Jumlah Baris", value=num_rows)
+                    st.metric(label="Jumlah Kategori Unik", value=unique_categories)
+
+                with col2:
+                    st.metric(label="Jumlah Kolom", value=num_columns)
+                    st.metric(label="Jumlah Item Unik", value=unique_items)
+
+                with col3:
+                    st.metric(label="Jumlah Pesanan Unik", value=unique_orders)
+                    
+                data_types_str = " | ".join([f"<strong>{col}</strong>: {dtype}" for col, dtype in df.dtypes.items()])
+
+                st.markdown(f"""
+                    <p style="margin-bottom: 0px;">
+                        Tipe Data Kolom
+                    </p>
+                    <p style="margin-top: 0px;">
+                        {data_types_str}
+                    </p>
+                    """, unsafe_allow_html=True)
+                
+                stats = df[['qty', 'price']].describe()
+                sums = df[['qty', 'price']].sum()
+                st.markdown(f"""
+                    <p style="margin-bottom: 0px;">Statistik Ringkasan untuk Kolom Numerik</p>
+                    <ul style="margin-top: 0px;">
+                        <li><strong>Quantity (Min, Max, Sum):</strong> {stats['qty']['min']:.2f}, {stats['qty']['max']:.2f}, {sums['qty']:.2f}</li>
+                        <li><strong>Price (Min, Max, Sum):</strong> {stats['price']['min']:.2f}, {stats['price']['max']:.2f}, {sums['price']:.2f}</li>
+                    </ul>
+                    """, unsafe_allow_html=True)
+
+                missing_values = df.isnull().sum()
+                if missing_values.any():
+                    st.markdown("<p style='margin-bottom: 0px;'>Nilai yang Hilang</p>", unsafe_allow_html=True)
+                    
+                    missing_values_str = "\n".join([f"<li><strong>{column}</strong>: {value} nilai hilang</li>" for column, value in missing_values[missing_values > 0].items()])
+                    
+                    st.markdown(f"""
+                    <ul style="margin-top: 0px;">
+                        {missing_values_str}
+                    </ul>
+                    """, unsafe_allow_html=True)
+
+        # Fetch available datasets from BigQuery based on fileName
+        st.markdown("#### Pilih File yang Sudah Diunggah Sebelumnya:")
+        query = f"SELECT DISTINCT fileName FROM `{TABLE_ID}`"
+        df_previous_uploads = client.query(query).to_dataframe()
+
+        if df_previous_uploads['fileName'].unique().tolist() and st.session_state.selected_file_name is not None and st.session_state.selected_file_name != 'Pilih file sebelumnya':  
+            selected_file_name = st.selectbox(
+                "Pilih file sebelumnya untuk digunakan:",
+                options=df_previous_uploads['fileName'].unique().tolist(),
+                index=0  
+            )
+            st.session_state.selected_file_name = selected_file_name
+        else: 
+            selected_file_name = st.selectbox(
+                "Pilih file sebelumnya untuk digunakan:",
+                options=['Pilih file sebelumnya'] + df_previous_uploads['fileName'].unique().tolist(),
+                index=0  
+            )
+            st.session_state.selected_file_name = selected_file_name
+
+
+        if st.session_state.selected_file_name != 'Pilih file sebelumnya': 
+            query = f"SELECT * FROM `{TABLE_ID}` WHERE fileName = '{st.session_state.selected_file_name}'"
+            selected_data = client.query(query).to_dataframe()
+
+            if selected_data is not None:
+                st.markdown(f"#### Data dari file: **{st.session_state.selected_file_name}**")
+                tab1, tab2 = st.columns(2, gap='medium')
+                with tab1:
+                    st.write("Tabel Data")
+                    selected_data.loc[:, selected_data.columns != 'fileName']
+                    if st.button("Konfirmasi Data untuk Diproses", type="primary"):
+                        st.session_state.confirm_data = True 
+                        if st.session_state.confirm_data is True:
+                            st.session_state.selected_data = selected_data
+
+                with tab2:
+                    st.write("Info Data")
+
+                    num_rows = selected_data.shape[0]
+                    num_columns = selected_data.shape[1]
+                    unique_orders = selected_data['orderId'].nunique() if 'orderId' in selected_data.columns else "N/A"
+                    unique_items = selected_data['itemName'].nunique() if 'itemName' in selected_data.columns else "N/A"
+                    unique_categories = selected_data['categoryName'].nunique() if 'categoryName' in selected_data.columns else "N/A"
+                    min_time = selected_data['orderTime'].min() if 'orderTime' in selected_data.columns else "N/A"
+                    max_time = selected_data['orderTime'].max() if 'orderTime' in selected_data.columns else "N/A"
+
+                    if min_time != "N/A" and max_time != "N/A":
+                        st.markdown(f"""
+                            <div style="background-color: #f0f2f6; padding: 10px; border-radius: 5px; margin-bottom: 20px;">
+                                <strong>Rentang Tanggal Pesanan:</strong> {min_time} to {max_time}
+                            </div>
+                            """, unsafe_allow_html=True)            
+                    
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric(label="Jumlah Baris", value=num_rows)
+                        st.metric(label="Jumlah Kategori Unik", value=unique_categories)
+
+                    with col2:
+                        st.metric(label="Jumlah Kolom", value=num_columns)
+                        st.metric(label="Jumlah Item Unik", value=unique_items)
+
+                    with col3:
+                        st.metric(label="Jumlah Pesanan Unik", value=unique_orders)
+                        
+                    data_types_str = " | ".join([f"<strong>{col}</strong>: {dtype}" for col, dtype in selected_data.dtypes.items()])
+
+                    st.markdown(f"""
+                        <p style="margin-bottom: 0px;">
+                            Tipe Data Kolom
+                        </p>
+                        <p style="margin-top: 0px;">
+                            {data_types_str}
+                        </p>
+                        """, unsafe_allow_html=True)
+                    
+                    stats = selected_data[['qty', 'price']].describe()
+                    sums = selected_data[['qty', 'price']].sum()
+                    st.markdown(f"""
+                        <p style="margin-bottom: 0px;">Statistik Ringkasan untuk Kolom Numerik</p>
+                        <ul style="margin-top: 0px;">
+                            <li><strong>Quantity (Min, Max, Sum):</strong> {stats['qty']['min']:.2f}, {stats['qty']['max']:.2f}, {sums['qty']:.2f}</li>
+                            <li><strong>Price (Min, Max, Sum):</strong> {stats['price']['min']:.2f}, {stats['price']['max']:.2f}, {sums['price']:.2f}</li>
+                        </ul>
+                        """, unsafe_allow_html=True)
+
+                    missing_values = selected_data.isnull().sum()
+                    if missing_values.any():
+                        st.markdown("<p style='margin-bottom: 0px;'>Nilai yang Hilang</p>", unsafe_allow_html=True)
+                        
+                        missing_values_str = "\n".join([f"<li><strong>{column}</strong>: {value} nilai hilang</li>" for column, value in missing_values[missing_values > 0].items()])
+                        
+                        st.markdown(f"""
+                        <ul style="margin-top: 0px;">
+                            {missing_values_str}
+                        </ul>
+                        """, unsafe_allow_html=True)
+
+# Section 2: Preprocessing Data
+elif navbar_option == "Preprocessing Data":
+    with st.expander("Preprocessing Data", expanded=True):
+        # Preprocessing can only proceed if the data has been confirmed
+        if st.session_state.confirm_data:
+            # Use uploaded or selected data for preprocessing
+            if st.session_state.df is not None or st.session_state.selected_data is not None:
+                df_to_preprocess = st.session_state.df if st.session_state.df is not None else st.session_state.selected_data
+
+                # Preprocessing step: Ensure columns are available
+                missing_columns = [col for col in REQUIRED_COLUMNS if col not in df_to_preprocess.columns]
+                if missing_columns:
+                    st.error(f"Kolom berikut tidak ada di data yang diunggah: {', '.join(missing_columns)}")
+                else:
+                    st.markdown(f"#### Data dari file **{st.session_state.selected_file_name}** siap untuk diproses")
+                    tab1, tab2 = st.columns(2, gap='medium')
+                    with tab1:
+                        st.write("Tabel Data")
+                        st.dataframe(df_to_preprocess.loc[:, df_to_preprocess.columns != 'fileName'])
+
+                    with tab2:
+                        st.write("Info Data")
+
+                        num_rows = df_to_preprocess.shape[0]
+                        num_columns = df_to_preprocess.shape[1]
+                        unique_orders = df_to_preprocess['orderId'].nunique() if 'orderId' in df_to_preprocess.columns else "N/A"
+                        unique_items = df_to_preprocess['itemName'].nunique() if 'itemName' in df_to_preprocess.columns else "N/A"
+                        unique_categories = df_to_preprocess['categoryName'].nunique() if 'categoryName' in df_to_preprocess.columns else "N/A"
+                        min_time = df_to_preprocess['orderTime'].min() if 'orderTime' in df_to_preprocess.columns else "N/A"
+                        max_time = df_to_preprocess['orderTime'].max() if 'orderTime' in df_to_preprocess.columns else "N/A"
+
+                        if min_time != "N/A" and max_time != "N/A":
+                            st.markdown(f"""
+                                <div style="background-color: #f0f2f6; padding: 10px; border-radius: 5px; margin-bottom: 20px;">
+                                    <strong>Rentang Tanggal Pesanan:</strong> {min_time} to {max_time}
+                                </div>
+                                """, unsafe_allow_html=True)            
+                        
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric(label="Jumlah Baris", value=num_rows)
+                            st.metric(label="Jumlah Kategori Unik", value=unique_categories)
+
+                        with col2:
+                            st.metric(label="Jumlah Kolom", value=num_columns)
+                            st.metric(label="Jumlah Item Unik", value=unique_items)
+
+                        with col3:
+                            st.metric(label="Jumlah Pesanan Unik", value=unique_orders)
+                            
+                        data_types_str = " | ".join([f"<strong>{col}</strong>: {dtype}" for col, dtype in df_to_preprocess.dtypes.items()])
+
+                        st.markdown(f"""
+                            <p style="margin-bottom: 0px;">
+                                Tipe Data Kolom
+                            </p>
+                            <p style="margin-top: 0px;">
+                                {data_types_str}
+                            </p>
+                            """, unsafe_allow_html=True)
+                        
+                        stats = df_to_preprocess[['qty', 'price']].describe()
+                        sums = df_to_preprocess[['qty', 'price']].sum()
+                        st.markdown(f"""
+                            <p style="margin-bottom: 0px;">Statistik Ringkasan untuk Kolom Numerik</p>
+                            <ul style="margin-top: 0px;">
+                                <li><strong>Quantity (Min, Max, Sum):</strong> {stats['qty']['min']:.2f}, {stats['qty']['max']:.2f}, {sums['qty']:.2f}</li>
+                                <li><strong>Price (Min, Max, Sum):</strong> {stats['price']['min']:.2f}, {stats['price']['max']:.2f}, {sums['price']:.2f}</li>
+                            </ul>
+                            """, unsafe_allow_html=True)
+
+                        missing_values = df_to_preprocess.isnull().sum()
+                        if missing_values.any():
+                            st.markdown("<p style='margin-bottom: 0px;'>Nilai yang Hilang</p>", unsafe_allow_html=True)
+                            
+                            missing_values_str = "\n".join([f"<li><strong>{column}</strong>: {value} nilai hilang</li>" for column, value in missing_values[missing_values > 0].items()])
+                            
+                            st.markdown(f"""
+                            <ul style="margin-top: 0px;">
+                                {missing_values_str}
+                            </ul>
+                            """, unsafe_allow_html=True)
+
+                    preprocessed_df = utils.preprocess_data(df_to_preprocess)
+                    st.session_state.preprocessed_df = preprocessed_df
+
+                    st.markdown(f"#### Setelah preprocessing data {st.session_state.selected_file_name} siap digunakan untuk analisis")
+                    tab1, tab2 = st.columns(2, gap='medium')
+                    with tab1:
+                        st.write("Tabel Data")
+                        st.dataframe(preprocessed_df)
+
+                    with tab2:
+                        st.write("Info Data")
+
+                        num_rows = preprocessed_df.shape[0]
+                        num_columns = preprocessed_df.shape[1]
+                        unique_orders = preprocessed_df['orderId'].nunique() if 'orderId' in preprocessed_df.columns else "N/A"
+                        unique_items = preprocessed_df['itemName'].nunique() if 'itemName' in preprocessed_df.columns else "N/A"
+                        unique_categories = preprocessed_df['categoryName'].nunique() if 'categoryName' in preprocessed_df.columns else "N/A"
+                        min_time = preprocessed_df['orderTime'].min() if 'orderTime' in preprocessed_df.columns else "N/A"
+                        max_time = preprocessed_df['orderTime'].max() if 'orderTime' in preprocessed_df.columns else "N/A"
+
+                        if min_time != "N/A" and max_time != "N/A":
+                            st.markdown(f"""
+                                <div style="background-color: #f0f2f6; padding: 10px; border-radius: 5px; margin-bottom: 20px;">
+                                    <strong>Rentang Tanggal Pesanan:</strong> {min_time} to {max_time}
+                                </div>
+                                """, unsafe_allow_html=True)            
+                        
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric(label="Jumlah Baris", value=num_rows)
+                            st.metric(label="Jumlah Kategori Unik", value=unique_categories)
+
+                        with col2:
+                            st.metric(label="Jumlah Kolom", value=num_columns)
+                            st.metric(label="Jumlah Item Unik", value=unique_items)
+
+                        with col3:
+                            st.metric(label="Jumlah Pesanan Unik", value=unique_orders)
+                            
+                        data_types_str = " | ".join([f"<strong>{col}</strong>: {dtype}" for col, dtype in preprocessed_df.dtypes.items()])
+
+                        st.markdown(f"""
+                            <p style="margin-bottom: 0px;">
+                                Tipe Data Kolom
+                            </p>
+                            <p style="margin-top: 0px;">
+                                {data_types_str}
+                            </p>
+                            """, unsafe_allow_html=True)
+                        
+                        stats = preprocessed_df[['qty', 'price']].describe()
+                        sums = preprocessed_df[['qty', 'price']].sum()
+                        st.markdown(f"""
+                            <p style="margin-bottom: 0px;">Statistik Ringkasan untuk Kolom Numerik</p>
+                            <ul style="margin-top: 0px;">
+                                <li><strong>Quantity (Min, Max, Sum):</strong> {stats['qty']['min']:.2f}, {stats['qty']['max']:.2f}, {sums['qty']:.2f}</li>
+                                <li><strong>Price (Min, Max, Sum):</strong> {stats['price']['min']:.2f}, {stats['price']['max']:.2f}, {sums['price']:.2f}</li>
+                            </ul>
+                            """, unsafe_allow_html=True)
+
+                        missing_values = preprocessed_df.isnull().sum()
+                        if missing_values.any():
+                            st.markdown("<p style='margin-bottom: 0px;'>Nilai yang Hilang</p>", unsafe_allow_html=True)
+                            
+                            missing_values_str = "\n".join([f"<li><strong>{column}</strong>: {value} nilai hilang</li>" for column, value in missing_values[missing_values > 0].items()])
+                            
+                            st.markdown(f"""
+                            <ul style="margin-top: 0px;">
+                                {missing_values_str}
+                            </ul>
+                            """, unsafe_allow_html=True)
+
+                # Sidebar filter only appears after preprocessing
+                if st.session_state.preprocessed_df is not None:
+                    preprocessed_df = st.session_state.preprocessed_df
+                    
+                    # Get min and max dates from the preprocessed data
+                    min_date = pd.to_datetime(preprocessed_df['orderTime'].min())
+                    max_date = pd.to_datetime(preprocessed_df['orderTime'].max())
+
+                    # Sidebar Date Range Input
+                    st.sidebar.markdown("#### Filter")
+                    date_range = st.sidebar.date_input("Select Date Range", [min_date, max_date], min_value=min_date, max_value=max_date,
+                                                    help="Select Date Range for filter data to use.")
+                    
+                    st.session_state.date_range = date_range
+
+                    # Ensure that both start and end dates are selected
+                    if isinstance(date_range, tuple) and len(date_range) == 2:
+                        # Both start and end date selected
+                        start_date = pd.to_datetime(date_range[0])
+                        end_date = pd.to_datetime(date_range[1]) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
+                    else:
+                        # Only one date selected, so set end_date to be the same as start_date
+                        start_date = pd.to_datetime(date_range[0])
+                        end_date = start_date + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
+
+                    # Filter the dataframe based on the selected date range
+                    filtered_df = preprocessed_df[(preprocessed_df['orderTime'] >= start_date) & (preprocessed_df['orderTime'] <= end_date)]
+                    st.session_state.filtered_df = filtered_df
+
+                    st.markdown(f"#### Setelah difilter {st.session_state.selected_file_name} siap digunakan untuk analisis")
+                    tab1, tab2 = st.columns(2, gap='medium')
+                    with tab1:
+                        st.write("Tabel Data")
+                        st.dataframe(filtered_df)
+
+                    with tab2:
+                        st.write("Info Data")
+
+                        num_rows = filtered_df.shape[0]
+                        num_columns = filtered_df.shape[1]
+                        unique_orders = filtered_df['orderId'].nunique() if 'orderId' in filtered_df.columns else "N/A"
+                        unique_items = filtered_df['itemName'].nunique() if 'itemName' in filtered_df.columns else "N/A"
+                        unique_categories = filtered_df['categoryName'].nunique() if 'categoryName' in filtered_df.columns else "N/A"
+                        min_time = filtered_df['orderTime'].min() if 'orderTime' in filtered_df.columns else "N/A"
+                        max_time = filtered_df['orderTime'].max() if 'orderTime' in filtered_df.columns else "N/A"
+
+                        if min_time != "N/A" and max_time != "N/A":
+                            st.markdown(f"""
+                                <div style="background-color: #f0f2f6; padding: 10px; border-radius: 5px; margin-bottom: 20px;">
+                                    <strong>Rentang Tanggal Pesanan:</strong> {min_time} to {max_time}
+                                </div>
+                                """, unsafe_allow_html=True)            
+                        
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric(label="Jumlah Baris", value=num_rows)
+                            st.metric(label="Jumlah Kategori Unik", value=unique_categories)
+
+                        with col2:
+                            st.metric(label="Jumlah Kolom", value=num_columns)
+                            st.metric(label="Jumlah Item Unik", value=unique_items)
+
+                        with col3:
+                            st.metric(label="Jumlah Pesanan Unik", value=unique_orders)
+                            
+                        data_types_str = " | ".join([f"<strong>{col}</strong>: {dtype}" for col, dtype in filtered_df.dtypes.items()])
+
+                        st.markdown(f"""
+                            <p style="margin-bottom: 0px;">
+                                Tipe Data Kolom
+                            </p>
+                            <p style="margin-top: 0px;">
+                                {data_types_str}
+                            </p>
+                            """, unsafe_allow_html=True)
+                        
+                        stats = filtered_df[['qty', 'price']].describe()
+                        sums = filtered_df[['qty', 'price']].sum()
+                        st.markdown(f"""
+                            <p style="margin-bottom: 0px;">Statistik Ringkasan untuk Kolom Numerik</p>
+                            <ul style="margin-top: 0px;">
+                                <li><strong>Quantity (Min, Max, Sum):</strong> {stats['qty']['min']:.2f}, {stats['qty']['max']:.2f}, {sums['qty']:.2f}</li>
+                                <li><strong>Price (Min, Max, Sum):</strong> {stats['price']['min']:.2f}, {stats['price']['max']:.2f}, {sums['price']:.2f}</li>
+                            </ul>
+                            """, unsafe_allow_html=True)
+
+                        missing_values = filtered_df.isnull().sum()
+                        if missing_values.any():
+                            st.markdown("<p style='margin-bottom: 0px;'>Nilai yang Hilang</p>", unsafe_allow_html=True)
+                            
+                            missing_values_str = "\n".join([f"<li><strong>{column}</strong>: {value} nilai hilang</li>" for column, value in missing_values[missing_values > 0].items()])
+                            
+                            st.markdown(f"""
+                            <ul style="margin-top: 0px;">
+                                {missing_values_str}
+                            </ul>
+                            """, unsafe_allow_html=True)
+        else:
+            st.warning("Silakan unggah dan konfirmasi data terlebih dahulu di bagian 'Mengunggah Data'.")
+
+# Section 3: Analisis Data
+elif navbar_option == "Analisis Data":
+    with st.expander("Analisis Data", expanded=True):
+        if st.session_state.filtered_df is not None:
+            filtered_df = st.session_state.filtered_df
+            preprocessed_df = st.session_state.preprocessed_df
+            mins_date = pd.to_datetime(preprocessed_df['orderTime'].min())
+            maxs_date = pd.to_datetime(preprocessed_df['orderTime'].max())
+
+            if st.session_state.date_range is None:
+                min_date = pd.to_datetime(preprocessed_df['orderTime'].min())
+                max_date = pd.to_datetime(preprocessed_df['orderTime'].max())
+                st.session_state.date_range = [min_date, max_date]
+            else:
+                if len(st.session_state.date_range) == 2:
+                    min_date = st.session_state.date_range[0]
+                    max_date = st.session_state.date_range[1]
+                else:
+                    min_date = pd.to_datetime(preprocessed_df['orderTime'].min())
+                    max_date = pd.to_datetime(preprocessed_df['orderTime'].max())
+                    st.session_state.date_range = [min_date, max_date]
+
+            # Sidebar Date Range Input for further filtering
+            st.sidebar.markdown("#### Filter Tanggal (Analisis Apriori)")
+            date_range = st.sidebar.date_input(
+                "Select Date Range", [min_date, max_date], min_value=mins_date, max_value=maxs_date,
+                help="Pilih rentang tanggal untuk memfilter data analisis.")
+            
+            st.session_state.date_range = [min_date, max_date]
+
+            # Ensure that both start and end dates are selected
+            if isinstance(date_range, tuple) and len(date_range) == 2:
+                # Both start and end date selected
+                start_date = pd.to_datetime(date_range[0])
+                end_date = pd.to_datetime(date_range[1]) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
+            else:
+                # Only one date selected, so set end_date to be the same as start_date
+                start_date = pd.to_datetime(date_range[0])
+                end_date = start_date + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
+
+            # Filter the dataframe based on the selected date range in Analysis Data
+            filtered_df = preprocessed_df[(preprocessed_df['orderTime'] >= start_date) & (preprocessed_df['orderTime'] <= end_date)]
+            st.session_state.filtered_df = filtered_df
+
+            st.sidebar.markdown("#### Analysis Data Filters")
+            time_period = st.sidebar.selectbox(
+                "Select Time Period",
+                options=["D (Daily)", "W (Weekly)", "M (Monthly)", "Y (Yearly)"],
+                index=0,
+                help="Select Time Period for filter data to use."
+            )
+
+            time_period_map = {"D (Daily)": "D", "W (Weekly)": "W", "M (Monthly)": "M", "Y (Yearly)": "Y"}
+            selected_time_period = time_period_map[time_period]
+
             fig1 = utils.plot_total_transactions(st.session_state.filtered_df, time_period=selected_time_period)
             st.plotly_chart(fig1)
 
@@ -545,100 +596,136 @@ elif navbar_option == "Analysis Data":
                 fig2 = utils.plot_least_sold_items(st.session_state.filtered_df)
                 st.plotly_chart(fig2)
         else:
-            st.warning("Silakan unggah data terlebih dahulu di bagian 'Mengunggah Data'.")
+            st.warning("Silakan unggah dan konfirmasi data terlebih dahulu di bagian 'Mengunggah Data'.")
 
-# Section 3: Association Rule with Apriori
-elif navbar_option == "Association Rule with Apriori":
-    with st.expander("Association Rule with Apriori", expanded=True):
+# Bagian 4: Analisis Apriori
+elif navbar_option == "Analisis Apriori":
+    with st.expander("Analisis Apriori", expanded=True):
+        if st.session_state.filtered_df is not None:
+            filtered_df = st.session_state.filtered_df
+            preprocessed_df = st.session_state.preprocessed_df
+            mins_date = pd.to_datetime(preprocessed_df['orderTime'].min())
+            maxs_date = pd.to_datetime(preprocessed_df['orderTime'].max())
+
+            if st.session_state.date_range is None:
+                min_date = pd.to_datetime(preprocessed_df['orderTime'].min())
+                max_date = pd.to_datetime(preprocessed_df['orderTime'].max())
+                st.session_state.date_range = [min_date, max_date]
+            else:
+                if len(st.session_state.date_range) == 2:
+                    min_date = st.session_state.date_range[0]
+                    max_date = st.session_state.date_range[1]
+                    st.session_state.date_range = [min_date, max_date]
+
+            # Sidebar Date Range Input for further filtering
+            st.sidebar.markdown("#### Filter Tanggal (Analisis Apriori)")
+            date_range = st.sidebar.date_input(
+                "Select Date Range", [min_date, max_date], min_value=mins_date, max_value=maxs_date,
+                help="Pilih rentang tanggal untuk memfilter data analisis.")
+            
+
+            # Ensure that both start and end dates are selected
+            if isinstance(date_range, tuple) and len(date_range) == 2:
+                # Both start and end date selected
+                start_date = pd.to_datetime(date_range[0])
+                end_date = pd.to_datetime(date_range[1]) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
+            else:
+                # Only one date selected, so set end_date to be the same as start_date
+                start_date = pd.to_datetime(date_range[0])
+                end_date = start_date + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
+
+            # Filter the dataframe based on the selected date range in Analysis Data
+            filtered_df = preprocessed_df[(preprocessed_df['orderTime'] >= start_date) & (preprocessed_df['orderTime'] <= end_date)]
+            st.session_state.filtered_df = filtered_df
         
-        st.markdown("#### Run Apriori Algorithm")
+        st.markdown("#### Jalankan Algoritma Apriori")
         st.markdown("""
-        The Apriori algorithm will generate association rules from the transactions. Choose a recommended combination of minimum support and confidence below:
+        Algoritma Apriori akan menghasilkan aturan asosiasi dari transaksi. Pilih kombinasi minimum support dan confidence yang direkomendasikan di bawah ini:
         """)
 
-        # Predefined combinations of min_support, min_confidence, and explanations
+        # Kombinasi yang sudah ditentukan sebelumnya untuk min_support, min_confidence, dan penjelasan
         combinations = {
-            "Recommended for broad analysis. Support: 0.010, Confidence: 0.25": {
+            "Direkomendasikan untuk analisis luas. Support: 0.010, Confidence: 0.25": {
                 "values": (0.010, 0.25),
                 "explanation": """
-                    This combination captures the **broadest set of items**. With 1% support, it includes even low-frequency items, while a confidence of 25% balances the number and strength of the rules.
+                    Kombinasi ini menangkap **set item paling luas**. Dengan support 1%, kombinasi ini mencakup bahkan item yang jarang muncul, sedangkan confidence 25% menyeimbangkan jumlah dan kekuatan aturan.
                 """
             },
-            "Strong but diverse rules. Support: 0.010, Confidence: 0.30": {
+            "Aturan kuat namun beragam. Support: 0.010, Confidence: 0.30": {
                 "values": (0.010, 0.30),
                 "explanation": """
-                    **Wider scope** with strong associations. Support of 1% ensures broad item coverage, and confidence of 30% focuses on reliable associations.
+                    **Cakupan yang lebih luas** dengan asosiasi yang kuat. Support 1% memastikan cakupan item yang luas, dan confidence 30% berfokus pada asosiasi yang dapat diandalkan.
                 """
             },
-            "High confidence, broad scope. Support: 0.010, Confidence: 0.35": {
+            "Kepercayaan tinggi, cakupan luas. Support: 0.010, Confidence: 0.35": {
                 "values": (0.010, 0.35),
                 "explanation": """
-                    This combination offers **high confidence (35%)** for frequently occurring items (1% support), prioritizing very strong associations.
+                    Kombinasi ini menawarkan **confidence tinggi (35%)** untuk item yang sering muncul (1% support), memprioritaskan asosiasi yang sangat kuat.
                 """
             },
-            "Balanced choice. Support: 0.015, Confidence: 0.25": {
+            "Pilihan seimbang. Support: 0.015, Confidence: 0.25": {
                 "values": (0.015, 0.25),
                 "explanation": """
-                    A balanced choice with **slightly higher support (1.5%)** and **moderate confidence (25%)**. Ideal for capturing frequently bought but not too rare items.
+                    Pilihan yang seimbang dengan **support sedikit lebih tinggi (1.5%)** dan **confidence moderat (25%)**. Ideal untuk menangkap item yang sering dibeli tetapi tidak terlalu jarang.
                 """
             },
-            "Middle ground, reliable rules. Support: 0.015, Confidence: 0.30": {
+            "Titik tengah, aturan yang dapat diandalkan. Support: 0.015, Confidence: 0.30": {
                 "values": (0.015, 0.30),
                 "explanation": """
-                    A solid **middle ground**. With 1.5% support and 30% confidence, it's ideal for uncovering reliable associations without excluding too many items.
+                    **Titik tengah yang kuat**. Dengan support 1.5% dan confidence 30%, kombinasi ini ideal untuk menemukan asosiasi yang andal tanpa mengecualikan terlalu banyak item.
                 """
             },
-            "High confidence, frequent items. Support: 0.015, Confidence: 0.35": {
+            "Kepercayaan tinggi, item yang sering muncul. Support: 0.015, Confidence: 0.35": {
                 "values": (0.015, 0.35),
                 "explanation": """
-                    Focuses on frequent items with **high confidence** (35%), ensuring the strongest rules for the most frequent combinations.
+                    Fokus pada item yang sering muncul dengan **kepercayaan tinggi (35%)**, memastikan aturan yang paling kuat untuk kombinasi item yang sering.
                 """
             },
-            "Focused on frequent items. Support: 0.020, Confidence: 0.25": {
+            "Fokus pada item populer. Support: 0.020, Confidence: 0.25": {
                 "values": (0.020, 0.25),
                 "explanation": """
-                    Focused on **more popular products** with 2% support, allowing some flexibility with a confidence of 25% to generate more rules.
+                    Berfokus pada **produk yang lebih populer** dengan support 2%, memberikan fleksibilitas dengan confidence 25% untuk menghasilkan lebih banyak aturan.
                 """
             },
-            "Narrower focus, reliable rules. Support: 0.020, Confidence: 0.30": {
+            "Fokus lebih sempit, aturan yang andal. Support: 0.020, Confidence: 0.30": {
                 "values": (0.020, 0.30),
                 "explanation": """
-                    For a **tighter analysis**, 2% support ensures that only frequent items are included, and 30% confidence makes sure the rules are reliable.
+                    Untuk **analisis yang lebih ketat**, support 2% memastikan hanya item yang sering dimasukkan, dan confidence 30% memastikan aturannya andal.
                 """
             },
-            "Strongest associations. Support: 0.020, Confidence: 0.35": {
+            "Asosiasi yang paling kuat. Support: 0.020, Confidence: 0.35": {
                 "values": (0.020, 0.35),
                 "explanation": """
-                    **Recommended for discovering the strongest associations**. A support of 2% ensures frequent items are included, and a confidence of 35% focuses on very reliable associations.
+                    **Direkomendasikan untuk menemukan asosiasi yang paling kuat**. Support 2% memastikan item yang sering muncul disertakan, dan confidence 35% berfokus pada asosiasi yang sangat andal.
                 """
             }
         }
         
-        # Dropdown to select pre-configured combination of min_support and min_confidence
+        # Dropdown untuk memilih kombinasi pre-configured min_support dan min_confidence
         selected_combination = st.selectbox(
-            "Select a recommended combination",
+            "Pilih kombinasi yang direkomendasikan",
             options=list(combinations.keys()),
-            index=list(combinations.keys()).index(st.session_state.selected_combination)  # Restore previous selection
+            index=list(combinations.keys()).index(st.session_state.selected_combination)  # Mengembalikan pilihan sebelumnya
         )
 
         st.session_state.selected_combination = selected_combination
 
-        # Extract the selected values and explanation
+        # Mengambil nilai yang dipilih dan penjelasannya
         min_support, min_confidence = combinations[selected_combination]["values"]
         explanation = combinations[selected_combination]["explanation"]
 
-        # Explanation for support and confidence
+        # Penjelasan untuk support dan confidence
         st.markdown(f"""
-        You have selected:
-        - **Minimum Support**: `{min_support:.3f}` - This means an itemset must appear in at least {min_support * 100:.1f}% of all transactions.
-        - **Minimum Confidence**: `{min_confidence:.2f}` - This means the association rules must have a confidence of at least {min_confidence * 100:.0f}% to be accepted.
+        Anda telah memilih:
+        - **Minimum Support**: `{min_support:.3f}` - Ini berarti itemset harus muncul di setidaknya {min_support * 100:.1f}% dari semua transaksi.
+        - **Minimum Confidence**: `{min_confidence:.2f}` - Ini berarti aturan asosiasi harus memiliki confidence minimal {min_confidence * 100:.0f}% agar diterima.
         """)
 
-        # Display the explanation for the selected combination
-        st.markdown(f"**Explanation:** {explanation}")
+        # Menampilkan penjelasan untuk kombinasi yang dipilih
+        st.markdown(f"**Penjelasan:** {explanation}")
 
-        # Run the Apriori algorithm when the button is clicked
-        if st.session_state.filtered_df is not None and st.button("Run Apriori"):
+        # Jalankan algoritma Apriori saat tombol diklik
+        if st.session_state.filtered_df is not None and st.button("Jalankan Apriori", type="primary"):
             my_basket_sets = utils.create_basket_sets(st.session_state.filtered_df)
             st.session_state.my_basket_sets = my_basket_sets
 
@@ -648,7 +735,7 @@ elif navbar_option == "Association Rule with Apriori":
             formatted_rules = utils.display_association_rules(rules)
             st.session_state.formatted_rules = formatted_rules
 
-            st.toast('Market Basket Analysis has been completed successfully!', icon='✅')
+            st.toast('Analisis Market Basket telah selesai!', icon='✅')
             time.sleep(0.001)
 
             st.markdown(
@@ -665,77 +752,196 @@ elif navbar_option == "Association Rule with Apriori":
                 """,
                 unsafe_allow_html=True
             )
+        else:
+            st.warning("Silakan unggah dan konfirmasi data terlebih dahulu di bagian 'Mengunggah Data'.")
 
-        # Display association rules if available
+        # Tampilkan aturan asosiasi jika tersedia
         if st.session_state.formatted_rules is not None:
             st.markdown(f"""
-            #### Apriori Results
-            - **Number of Transactions Analyzed**: `{st.session_state.my_basket_sets.shape[0]}`
-            - **Number of Items Considered**: `{st.session_state.my_basket_sets.shape[1]}`
-            - **Number of Association Rules Generated**: `{len(st.session_state.rules)}`
+            #### Hasil Apriori
+            - **Jumlah Transaksi yang Dianalisis**: `{st.session_state.my_basket_sets.shape[0]}`
+            - **Jumlah Item yang Dipertimbangkan**: `{st.session_state.my_basket_sets.shape[1]}`
+            - **Jumlah Aturan Asosiasi yang Dihasilkan**: `{len(st.session_state.rules)}`
             """)
 
-            st.write("Results Apriori Data Table:")
+            st.write("Tabel Hasil Apriori:")
             st.dataframe(st.session_state.formatted_rules)
 
             tab1, tab2 = st.columns(2, gap='medium')
             with tab1:
-                st.write("Results Apriori Visualization with Graph:")
+                st.write("Visualisasi Hasil Apriori dengan Graph:")
                 html_content = utils.generate_pyvis_graph(st.session_state.rules)
                 components.html(html_content, height=650)
 
             with tab2:
-                st.write("Results Apriori Visualization with Graph:")
-                st.sidebar.markdown("#### Apriori Visualization Filters")
+                st.write("Visualisasi Hasil Apriori dengan Grafik")
+                st.sidebar.markdown("#### Filter Visualisasi Apriori")
     
-                # Sidebar for metric selection
+                # Sidebar untuk pemilihan metrik
                 metric = st.sidebar.selectbox(
-                    "Select Metric for Ranking Rules", 
+                    "Pilih Metrik untuk Mengurutkan Aturan", 
                     options=['confidence', 'lift', 'support'], 
-                    index=0,  # Default to 'confidence'
-                    help="Choose which metric to rank the association rules."
+                    index=0,  # Default ke 'confidence'
+                    help="Pilih metrik untuk mengurutkan aturan asosiasi."
                 )
                 
-                # Sidebar for the number of top rules to display
+                # Sidebar untuk memilih jumlah aturan teratas yang ditampilkan
                 top_n = st.sidebar.slider(
-                    "Number of Top Rules to Display", 
+                    "Jumlah Aturan Teratas untuk Ditampilkan", 
                     min_value=5, max_value=100, value=10, 
-                    help="Adjust the number of top association rules to display."
+                    help="Atur jumlah aturan asosiasi teratas yang akan ditampilkan."
                 )
-                # metric = st.selectbox("Select Metric for Ranking Rules", options=['confidence', 'lift', 'support'])
-                # top_n = st.slider("Number of Top Rules to Display", min_value=5, max_value=100, value=10)
                 bar_chart_fig = utils.plot_top_association_rules(st.session_state.rules, metric=metric, top_n=top_n)
                 st.plotly_chart(bar_chart_fig)
 
-# Section 4: Product Recommendation
-elif navbar_option == "Product Recommendation":
-    with st.expander("Product Recommendation", expanded=True):
-        if st.session_state.rules is not None:
-            product_to_recommend = st.text_input("Enter Product for Recommendation:", key="product_input")
-            if st.button("Run Product Recommendation"):
-                if product_to_recommend:
-                    product_recommendations = utils.product_recommendation(st.session_state.rules, st.session_state.filtered_df, product_to_recommend)
-                    st.session_state.product_recommendations = product_recommendations
-                    for product in product_recommendations:
-                        st.write(product)
-                else:
-                    st.warning("Please enter a product for recommendation.")
-        else:
-            st.warning("Silakan unggah data terlebih dahulu di bagian 'Analisis Apriori'.")
+# Section 5: Penerapan
+elif navbar_option == "Penerapan":
+    st.sidebar.markdown("#### Sort dan Filter")
+    st.session_state.sort_by = st.sidebar.selectbox(
+        "Sort produk berdasarkan:", 
+        options=["Produk sering dibeli bersama (Confidence)", "Produk paling banyak dibeli (Support)"],
+        index=0 if st.session_state.sort_by == "Produk sering dibeli bersama (Confidence)" else 1,
+        help="Silahkan pilih urutkan berdasarkan pilihan ini."
+    )
 
-# Section 5: Promo Recommendation
-elif navbar_option == "Promo Recommendation":
-    with st.expander("Promo Recommendation", expanded=True):
+    if st.session_state.sort_by == "Produk sering dibeli bersama (Confidence)":
+        st.session_state.sort_column = 'confidence'
+    else:
+        st.session_state.sort_column = 'support'
+
+    selected_tags = st.sidebar.multiselect(
+        "Filter berdasarkan tag:",
+        options=["Hubungan Kuat", "Populer", "Relevan"],
+        default=[],
+        help="Pilih tag untuk memfilter hasil rekomendasi"
+    )
+
+    with st.expander("Rekomendasi Produk", expanded=True):
         if st.session_state.rules is not None:
-            promo_to_recommend = st.text_input("Enter Product for Promo Recommendation:", key="promo_input")
-            if st.button("Run Promo Recommendation"):
-                if promo_to_recommend:
-                    promo_recommendations = utils.promo_recommendation(st.session_state.rules, st.session_state.filtered_df, promo_to_recommend)
-                    st.session_state.promo_recommendations = promo_recommendations
-                    st.write("Promotional Recommendations:")
-                    promo_recommendations_df = pd.DataFrame(promo_recommendations)
-                    st.dataframe(promo_recommendations_df)
+            st.markdown("#### Pilih Produk untuk Rekomendasi Produk")
+
+            rules_sorted = st.session_state.formatted_rules.sort_values(by=st.session_state.sort_column, ascending=False)
+
+            antecedents_products = rules_sorted['antecedents'].apply(
+                lambda x: [item.strip() for item in x.split(',')]
+            ).explode().unique().tolist()
+
+            # Pilih produk dari 'antecedents' yang akan digunakan untuk rekomendasi
+            product_to_recommend = st.selectbox(
+                "Pilih produk untuk mencari rekomendasi:",
+                antecedents_products,
+                key="product_input",
+                placeholder="Cari produk",
+                help="Cari produk yang ingin Anda lihat rekomendasinya"
+            )
+
+            if st.button("Cari Rekomendasi Produk", type="primary"):
+                if product_to_recommend:
+                    # Dapatkan rekomendasi produk
+                    product_recommendations = utils.product_recommendation(
+                        rules=st.session_state.formatted_rules, 
+                        item=product_to_recommend, 
+                        sort_by=st.session_state.sort_column
+                    )
+                    
+                    if product_recommendations:
+                        st.success(f"Berikut adalah produk yang direkomendasikan berdasarkan produk '{product_to_recommend}':")
+                        st.markdown("<ul>", unsafe_allow_html=True)
+                        
+                        # Tampilkan rekomendasi produk beserta tag
+                        for rec in product_recommendations:
+                            confidence_percent = f"{rec['confidence'] * 100:.2f}%"
+                            support_percent = f"{rec['support'] * 100:.2f}%"
+
+                            tags = []
+                            if rec['confidence'] >= 0.3:
+                                tags.append("Hubungan Kuat")
+                            if rec['support'] >= 0.03:
+                                tags.append("Populer")
+                            if not tags:
+                                tags.append("Relevan")
+
+                            if selected_tags and not any(tag in selected_tags for tag in tags):
+                                continue
+
+                            st.markdown(f"""
+                                <div style="background-color: #f8f9fa; padding: 15px; margin-bottom: 10px; border-radius: 5px;">
+                                    <h5>{rec['product'].capitalize()}</h5>
+                                    <p>Tingkat Keterkaitan <strong>{confidence_percent}</strong> | Kemunculan <strong>{support_percent}</strong></p>
+                                    {"".join([f'<span style="background-color: #d4edda; color: #155724; padding: 5px; margin-right: 5px; border-radius: 3px;">{tag}</span>' for tag in tags])}
+                                </div>
+                            """, unsafe_allow_html=True)
+
+
+                    else:
+                        st.warning(f"Tidak ada rekomendasi produk yang ditemukan untuk '{product_to_recommend}'. Coba dengan nama produk lain.")
                 else:
-                    st.warning("Please enter a product for promo recommendation.")
+                    st.error("Silakan masukkan nama produk untuk melihat rekomendasi.")
         else:
-            st.warning("Silakan unggah data terlebih dahulu di bagian 'Analisis Apriori'.")
+            st.warning("Silakan jalankan analisis asosiasi terlebih dahulu di bagian 'Analisis Apriori'.")
+
+    
+    with st.expander("Rekomendasi Promo", expanded=True):
+        if st.session_state.rules is not None:
+            st.markdown("#### Pilih Produk untuk Rekomendasi Promo")
+
+            rules_sorted = st.session_state.formatted_rules.sort_values(by=st.session_state.sort_column, ascending=False)
+
+            # Ambil produk dari antecedents dan consequents yang sudah disortir
+            product_list = pd.concat([
+                rules_sorted['antecedents'].apply(lambda x: [item.strip() for item in x.split(',')]).explode(),
+                rules_sorted['consequents'].apply(lambda x: [item.strip() for item in x.split(',')]).explode()
+            ]).unique().tolist()
+
+            # Pilih produk dari 'antecedents' yang akan digunakan untuk rekomendasi
+            promo_to_recommend = st.selectbox(
+                "Pilih produk untuk rekomendasi promo:",
+                product_list,
+                key="promo_input",
+                placeholder="Cari produk",
+                help="Cari produk yang ingin Anda buat rekomendasinya"
+            )
+
+            if st.button("Cari Rekomendasi Promo", type="primary"):
+                if promo_to_recommend:
+                    # Panggil fungsi untuk mendapatkan rekomendasi promosi
+                    promo_recommendations = utils.promo_recommendation(st.session_state.rules, promo_to_recommend, sort_by=st.session_state.sort_column)
+                    st.session_state.promo_recommendations = promo_recommendations
+                    
+                    if promo_recommendations:
+                        st.success(f"Rekomendasi promo untuk produk '{promo_to_recommend}':")
+
+                        # Tampilkan hasil dengan styling yang lebih baik
+                        for promo in promo_recommendations:
+                            confidence_percent = f"{promo['confidence'] * 100:.2f}%"
+                            support_percent = f"{promo['support'] * 100:.2f}%"
+                            
+                            # Tentukan tag berdasarkan confidence dan support
+                            tags = []
+                            if promo['confidence'] >= 0.3:
+                                tags.append("Hubungan Kuat")
+                            if promo['support'] >= 0.03:
+                                tags.append("Populer")
+                            if not tags:
+                                tags.append("Relevan")
+
+                            # Tampilkan hasil dengan layout yang lebih menarik
+                            st.markdown(f"""
+                                <div style="background-color: #f8f9fa; padding: 15px; margin-bottom: 10px; border-radius: 5px;">
+                                    <h5>{promo['Paket Promo'].capitalize()}</h5>
+                                    <p>Tingkat keterkaitan: <strong>{confidence_percent}</strong> | Kemunculan: <strong>{support_percent}</strong></p>
+                                    {"".join([f'<span style="background-color: #d4edda; color: #155724; padding: 5px; margin-right: 5px; border-radius: 3px;">{tag}</span>' for tag in tags])}
+                                </div>
+                            """, unsafe_allow_html=True)
+                    else:
+                        st.info("Tidak ada rekomendasi promo untuk produk ini.")
+                else:
+                    st.warning("Silakan pilih produk terlebih dahulu.")
+        else:
+            st.warning("Silahkan jalankan analisis asosiasi terlebih dahulu di bagian 'Analisis Apriori'.")
+
+st.sidebar.markdown("---")  
+if st.sidebar.button("Logout"):
+    st.session_state["logged_in"] = False
+    st.success("You have been logged out.")
+    st.switch_page("pages/1_Login.py")

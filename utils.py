@@ -94,58 +94,96 @@ def display_association_rules(rules):
     return rules
 
 
-def product_recommendation(rules, data, item):
+def product_recommendation(rules, item, sort_by='confidence'):
     """
-    Generate product recommendations based on association rules.
+    Membuat rekomendasi produk berdasarkan aturan asosiasi.
 
     Parameters:
-    - rules: DataFrame containing association rules.
-    - data: DataFrame containing transaction data.
-    - item: Product for which recommendations are generated.
+    - rules: DataFrame yang berisi aturan asosiasi.
+    - item: Produk (antecedents) yang akan digunakan untuk membuat rekomendasi.
 
     Returns:
-    - recommendations: List of recommended products.
+    - recommendations: List produk yang direkomendasikan beserta nilai confidence/support.
     """
     recommendations = []
 
-    relevant_rules = rules[rules['antecedents'] == item]
-    recommended_items = relevant_rules['consequents']
+    # Filter aturan yang relevan berdasarkan produk yang diminta (item harus ada di antecedents)
+    relevant_rules = rules[rules['antecedents'].apply(lambda x: item in [i.strip() for i in x.split(',')])]
 
-    for recommended_item in recommended_items:
-        if recommended_item not in data.columns and recommended_item != item:
-            recommendations.append(recommended_item)
+    # Ambil consequents dan confidence dari aturan relevan
+    for _, row in relevant_rules.iterrows():
+        antecedents_list = [a.strip() for a in row['antecedents'].split(',')]  # Pecah antecedents menjadi daftar
+        if item in antecedents_list:  # Pastikan produk input ada sepenuhnya di daftar antecedents
+            consequents = row['consequents']
+            confidence = row['confidence']
+            support = row['support']
+
+            # Pecah consequents menjadi produk individual jika ada beberapa produk dalam satu rule
+            recommended_items = consequents.split(',')
+            for recommended_item in recommended_items:
+                recommended_item = recommended_item.strip()  # Hilangkan spasi ekstra
+                if recommended_item != item and recommended_item not in antecedents_list:  # Hindari menambahkan produk input
+                    recommendations.append({
+                        'product': recommended_item,
+                        'confidence': confidence,
+                        'support': support
+                    })
+
+    # Sort rekomendasi berdasarkan confidence (atau bisa juga berdasarkan support jika diinginkan)
+    recommendations = sorted(recommendations, key=lambda x: x[sort_by], reverse=True)
 
     return recommendations
 
 
-def promo_recommendation(rules, data, item):
+def promo_recommendation(rules, item, sort_by="confidence"):
     """
-    Generate promotional recommendations based on association rules.
+    Menghasilkan rekomendasi promosi berdasarkan aturan asosiasi.
 
     Parameters:
-    - rules: DataFrame containing association rules.
-    - item: Product for which promotional recommendations are generated.
+    - rules: DataFrame berisi aturan asosiasi.
+    - item: Produk (antecedents atau consequents) yang akan digunakan untuk membuat rekomendasi.
+    - sort_by: Urutan hasil rekomendasi berdasarkan "confidence" atau "support".
 
     Returns:
-    - promo: List of recommended promotions.
+    - promo: Daftar rekomendasi promo dengan confidence atau support.
     """
     promo = []
-    relevant_rules = rules[rules['antecedents'] == item]
-    
-    if not relevant_rules.empty:
-        # Create a DataFrame to store the recommendations
-        recommended_df = relevant_rules.explode('consequents')
-        recommended_df = recommended_df[recommended_df['consequents'] != item]
-        recommended_df = recommended_df[~recommended_df['consequents'].isin(data.columns)]
-        
-        # Map the results to the desired format
-        promo = recommended_df[['antecedents', 'consequents', 'confidence']].apply(
-            lambda row: {'Package': f"{item} + {row['consequents']}", 'Confidence': row['confidence']},
-            axis=1
-        ).tolist()
-    
-    return promo
 
+    # Filter rules di mana produk item ada dalam antecedents atau consequents
+    relevant_rules = rules[
+        (rules['antecedents'].apply(lambda x: item in x)) | 
+        (rules['consequents'].apply(lambda x: item in x))
+    ]
+
+    # Ambil antecedents, consequents, confidence, dan support dari aturan relevan
+    for _, row in relevant_rules.iterrows():
+        antecedents = row['antecedents']
+        consequents = row['consequents']
+        confidence = row['confidence']
+        support = row['support']
+
+        # Pecah antecedents dan consequents menjadi produk individual jika ada beberapa produk dalam satu rule
+        antecedent_items = [a.strip() for a in antecedents.split(',')]
+        consequent_items = [c.strip() for c in consequents.split(',')]
+
+        # Buat kombinasi promo antara antecedents dan consequents
+        if item in antecedent_items or item in consequent_items:
+            combined_items = list(set(antecedent_items + consequent_items) - {item})
+
+            # Gabungkan semua item menjadi satu string untuk promosi
+            promo_string = f"{item} + " + " + ".join(combined_items)
+
+            # Simpan hasil rekomendasi dengan confidence dan support
+            promo.append({
+                'Paket Promo': promo_string,
+                'confidence': confidence,
+                'support': support
+            })
+
+    # Urutkan berdasarkan kolom yang dipilih (confidence atau support)
+    promo = sorted(promo, key=lambda x: x[sort_by], reverse=True)
+
+    return promo
 
 def plot_frequency_of_items(df):
     Frequency_of_items = df.groupby(pd.Grouper(key='itemName')).size().reset_index(name='count')
